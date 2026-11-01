@@ -1,0 +1,17 @@
+# Using clang-cl with Visual Studio
+CompileFlags:
+  CompilationDatabase: build/  # If using CMake with compile_commands.json
+  Add: [-std=c++26]
+
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    # Simply enable clang-tidy - it will read .clang-tidy automatically
+    Add: [
+      # No need to specify checks here!
+      # They'll be read from .clang-tidy
+    ]
+
+Index:
+  Background: Build
