@@ -10,6 +10,8 @@ target_sources(Matrix INTERFACE Matrix.hpp)
 
 add_executable(test test.cpp)
 target_link_libraries(test PRIVATE Matrix)
+add_executable(Matrix_tests Matrix_tests.cpp)
+target_link_libraries(Matrix_tests PRIVATE Matrix)
 
 
 project(Matrix)
