@@ -29,30 +29,98 @@ concept Extents = requires(T t) {
 } && std::same_as<T, std::extents<typename T::index_type, T::static_extent(0), T::static_extent(1)>>;
 
 template <class T>
-concept BaseMatrixLike = requires(const T &cref) {
-  typename T::NumericType;
-  typename T::IndexType;
-  typename T::ExtentsType;
-  { cref.Rows() } -> std::same_as<typename T::IndexType>;
-  { cref.Columns() } -> std::same_as<typename T::IndexType>;
-  { cref.GetExtents() } -> std::same_as<typename T::ExtentsType>;
-} && Extents<typename T::ExtentsType> && std::same_as<typename T::IndexType, typename T::ExtentsType::index_type>;
+concept BaseMatrixLike =
+    requires(const std::remove_cvref_t<T> &cref) {
+      typename std::remove_cvref_t<T>::NumericType;
+      typename std::remove_cvref_t<T>::IndexType;
+      typename std::remove_cvref_t<T>::ExtentsType;
+      { cref.Rows() } -> std::same_as<typename std::remove_cvref_t<T>::IndexType>;
+      { cref.Columns() } -> std::same_as<typename std::remove_cvref_t<T>::IndexType>;
+      { cref.GetExtents() } -> std::same_as<typename std::remove_cvref_t<T>::ExtentsType>;
+    } && Extents<typename std::remove_cvref_t<T>::ExtentsType> &&
+    std::same_as<typename std::remove_cvref_t<T>::IndexType, typename std::remove_cvref_t<T>::ExtentsType::index_type>;
 
 template <class T>
 concept ConstMatrixLike = BaseMatrixLike<T> && requires(const T &cref) {
-  { cref[0, 0] } -> SomeConst<typename T::NumericType>;
-  { cref.At(0, 0) } -> SomeConst<typename T::NumericType>;
+  { cref[0, 0] } -> SomeConst<typename std::remove_cvref_t<T>::NumericType>;
+  { cref.At(0, 0) } -> SomeConst<typename std::remove_cvref_t<T>::NumericType>;
 };
 template <class T>
 concept MutableMatrixLike = BaseMatrixLike<T> && requires(T &ref) {
-  { ref[0, 0] } -> std::same_as<typename T::NumericType &>;
-  { ref.At(0, 0) } -> std::same_as<typename T::NumericType &>;
+  { ref[0, 0] } -> std::same_as<typename std::remove_cvref_t<T>::NumericType &>;
+  { ref.At(0, 0) } -> std::same_as<typename std::remove_cvref_t<T>::NumericType &>;
 };
 template <class T>
 concept MovableMatrixLike = BaseMatrixLike<T> && requires(T &&mref) {
-  { std::move(mref)[0, 0] } -> std::same_as<typename T::NumericType &&>;
-  { std::move(mref).At(0, 0) } -> std::same_as<typename T::NumericType &&>;
+  { std::move(mref)[0, 0] } -> std::same_as<typename std::remove_cvref_t<T>::NumericType &&>;
+  { std::move(mref).At(0, 0) } -> std::same_as<typename std::remove_cvref_t<T>::NumericType &&>;
 };
+
+template <BaseMatrixLike M>
+using MatNumericType = typename std::remove_cvref_t<M>::NumericType;
+template <BaseMatrixLike M>
+using MatExtentsType = typename std::remove_cvref_t<M>::ExtentsType;
+template <BaseMatrixLike M>
+using MatIndexType = typename std::remove_cvref_t<M>::IndexType;
+
+template <typename Extents1, typename Extents2>
+concept MatrixExtentsStaticCompatible =
+    ((Extents1::static_extent(0) == std::dynamic_extent || Extents2::static_extent(0) == std::dynamic_extent ||
+      Extents1::static_extent(0) == Extents2::static_extent(0)) &&
+     (Extents1::static_extent(1) == std::dynamic_extent || Extents2::static_extent(1) == std::dynamic_extent ||
+      Extents1::static_extent(1) == Extents2::static_extent(1)) &&
+     requires { std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>{}; });
+
+template <typename Extents1, typename Extents2>
+  requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
+using MatrixCommonExtents =
+    std::extents<std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>,
+                 std::min(Extents1::static_extent(0), Extents2::static_extent(0)),
+                 std::min(Extents1::static_extent(1), Extents2::static_extent(1))>;
+
+template <typename Extents1, typename Extents2>
+  requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
+inline constexpr void EnforceExtents(Extents1 ext1, Extents2 ext2) {
+  if (ext1 != ext2) {
+    throw std::invalid_argument("the extents of the provided matrices are incompatible");
+  }
+}
+
+template <BaseMatrixLike Mat1, BaseMatrixLike Mat2, typename Callable>
+inline constexpr bool CacheLineWaltz(Mat1 &&a, Mat2 &&b, Callable &&c) noexcept(noexcept(c(a[0, 0], b[0, 0])))
+  requires MatrixExtentsStaticCompatible<MatExtentsType<Mat2>, MatExtentsType<Mat2>> &&
+           std::invocable<Callable, decltype(std::forward<Mat1>(a)[0, 0]), decltype(std::forward<Mat2>(b)[0, 0])>
+{
+  if (a.GetExtents() != b.GetExtents()) {
+    std::unreachable();
+  }
+  static constexpr size_t kCacheLineSize1 =
+      std::max(2 * std::hardware_destructive_interference_size / sizeof(MatNumericType<Mat1>), 1uz);
+  static constexpr size_t kCacheLineSize2 =
+      std::max(2 * std::hardware_destructive_interference_size / sizeof(MatNumericType<Mat2>), 1uz);
+  static constexpr size_t kCacheLineSize = std::max(kCacheLineSize1, kCacheLineSize2);
+  const auto rows = a.Rows();
+  const auto cols = a.Columns();
+  for (size_t row_maj = 0; row_maj < rows; row_maj += kCacheLineSize) {
+    for (size_t col_maj = 0; col_maj < cols; col_maj += kCacheLineSize) {
+      const auto row_end = std::min(row_maj + kCacheLineSize, static_cast<size_t>(rows));
+      const auto col_end = std::min(col_maj + kCacheLineSize, static_cast<size_t>(cols));
+      for (size_t row = row_maj; row < row_end; row++) {
+        for (size_t col = col_maj; col < col_end; col++) {
+          if constexpr (std::is_same_v<decltype(c(std::forward<Mat1>(a)[row, col], std::forward<Mat2>(b)[row, col])),
+                                       bool>) {
+            if (!c(std::forward<Mat1>(a)[row, col], std::forward<Mat2>(b)[row, col])) {
+              return false;
+            }
+          } else {
+            c(std::forward<Mat1>(a)[row, col], std::forward<Mat2>(b)[row, col]);
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
 
 struct VerticalStackTagType {};
 struct HorizontalStackTagType {};
@@ -261,28 +329,16 @@ class Matrix {
     if constexpr (!kIsStatic) {
       storage_.resize(total, view[0, 0]);
     }
-    static constexpr size_t kCacheLineSize =
-        std::max(2 * std::hardware_destructive_interference_size / sizeof(Numeric), 1uz);
-    const auto rows = Rows();
-    const auto cols = Columns();
-    for (size_t row_maj = 0; row_maj < rows; row_maj += kCacheLineSize) {
-      for (size_t col_maj = 0; col_maj < cols; col_maj += kCacheLineSize) {
-        const auto row_end = std::min(row_maj + kCacheLineSize, rows);
-        const auto col_end = std::min(col_maj + kCacheLineSize, cols);
-        for (size_t row = row_maj; row < row_end; row++) {
-          for (size_t col = col_maj; col < col_end; col++) {
-            (*this)[row, col] = view[row, col];
-          }
-        }
-      }
-    }
+    CacheLineWaltz(*this, view, [](auto &a, const auto &b) { a = b; });
   }
 
-  template <typename Extents1, typename Extents2>
-    requires(std::is_same_v<Extents, VStackExtentsType<Extents1, Extents2>>)
-  inline constexpr Matrix(VerticalStackTagType, const Matrix<Numeric, Extents1> &matrix1,
-                          const Matrix<Numeric, Extents2> &matrix2)
-      : storage_{}, extents_(VStackExtents(matrix1.GetExtents(), matrix2.GetExtents())) {
+  template <BaseMatrixLike Mat1, BaseMatrixLike Mat2>
+    requires(VStackExtentsStackable<MatExtentsType<Mat2>, MatExtentsType<Mat2>> &&
+             std::is_same_v<Extents, VStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>> &&
+             std::is_convertible_v<MatNumericType<Mat1>, NumericType> &&
+             std::is_convertible_v<MatNumericType<Mat2>, NumericType>)
+  inline constexpr Matrix(VerticalStackTagType, Mat1 &&a, Mat2 &&b)
+      : storage_{}, extents_(VStackExtents(a.GetExtents(), b.GetExtents())) {
     const auto total = TotalSize(extents_);
     if (total == 0) {
       return;
@@ -290,17 +346,17 @@ class Matrix {
     if constexpr (!kIsStatic) {
       storage_.resize(total, Numeric{});
     }
-    const auto cols = matrix1.Columns();
-    const auto rows1 = matrix1.Rows();
-    const auto rows2 = matrix2.Rows();
+    const auto cols = a.Columns();
+    const auto rows1 = a.Rows();
+    const auto rows2 = b.Rows();
     for (size_t row = 0; row < rows1; row++) {
       for (size_t col = 0; col < cols; col++) {
-        (*this)[row, col] = matrix1[row, col];
+        (*this)[row, col] = std::forward<Mat1>(a)[row, col];
       }
     }
     for (size_t row = 0; row < rows2; row++) {
       for (size_t col = 0; col < cols; col++) {
-        (*this)[rows1 + row, col] = matrix2[row, col];
+        (*this)[rows1 + row, col] = std::forward<Mat2>(b)[row, col];
       }
     }
   }
@@ -411,34 +467,12 @@ auto MatrixTCopy(const View &view) {
   return TransposedMatrixType<View>{MatrixTView(view)};
 }
 
-template <typename Numeric, typename Extents1, typename Extents2>
-[[nodiscard]] inline constexpr auto MatrixVStack(const Matrix<Numeric, Extents1> &matrix1,
-                                                 const Matrix<Numeric, Extents2> &matrix2)
-    -> Matrix<Numeric, VStackExtentsType<Extents1, Extents2>> {
-  return Matrix<Numeric, VStackExtentsType<Extents1, Extents2>>(VerticalStackTagType{}, matrix1, matrix2);
-}
-
-template <typename Extents1, typename Extents2>
-concept MatrixExtentsStaticCompatible =
-    ((Extents1::static_extent(0) == std::dynamic_extent || Extents2::static_extent(0) == std::dynamic_extent ||
-      Extents1::static_extent(0) == Extents2::static_extent(0)) &&
-     (Extents1::static_extent(1) == std::dynamic_extent || Extents2::static_extent(1) == std::dynamic_extent ||
-      Extents1::static_extent(1) == Extents2::static_extent(1)) &&
-     requires { std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>{}; });
-
-template <typename Extents1, typename Extents2>
-  requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
-using MatrixCommonExtents =
-    std::extents<std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>,
-                 std::min(Extents1::static_extent(0), Extents2::static_extent(0)),
-                 std::min(Extents1::static_extent(1), Extents2::static_extent(1))>;
-
-template <typename Extents1, typename Extents2>
-  requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
-inline constexpr void EnforceExtents(Extents1 ext1, Extents2 ext2) {
-  if (ext1 != ext2) {
-    throw std::invalid_argument("the extents of the provided matrices are incompatible");
-  }
+template <BaseMatrixLike Mat1, BaseMatrixLike Mat2,
+          typename Numeric = std::common_type_t<MatNumericType<Mat1>, MatNumericType<Mat2>>>
+[[nodiscard]] inline constexpr auto MatrixVStack(Mat1 &&a, Mat2 &&b)
+    -> Matrix<Numeric, VStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>> {
+  return Matrix<Numeric, VStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>>(
+      VerticalStackTagType{}, std::forward<Mat1>(a), std::forward<Mat2>(b));
 }
 
 /* for matrices of the same extents (the ones that have the same effective extents when this function is invoked):
@@ -462,33 +496,22 @@ template <ConstMatrixLike View1, ConstMatrixLike View2>
       return std::partial_ordering::unordered;
     }
     std::partial_ordering result = std::partial_ordering::unordered;
-    static constexpr size_t kCacheLineSize1 =
-        std::max(2 * std::hardware_destructive_interference_size / sizeof(typename View1::NumericType), 1uz);
-    static constexpr size_t kCacheLineSize2 =
-        std::max(2 * std::hardware_destructive_interference_size / sizeof(typename View2::NumericType), 1uz);
-    static constexpr size_t kCacheLineSize = std::max(kCacheLineSize1, kCacheLineSize2);
-    const auto rows = a.Rows();
-    const auto cols = a.Columns();
-    for (size_t row_maj = 0; row_maj < rows; row_maj += kCacheLineSize) {
-      for (size_t col_maj = 0; col_maj < cols; col_maj += kCacheLineSize) {
-        const auto row_end = std::min(row_maj + kCacheLineSize, static_cast<size_t>(rows));
-        const auto col_end = std::min(col_maj + kCacheLineSize, static_cast<size_t>(cols));
-        for (size_t row = row_maj; row < row_end; row++) {
-          for (size_t col = col_maj; col < col_end; col++) {
-            const auto cmp = a[row, col] <=> b[row, col];
-            if (cmp == std::partial_ordering::unordered) {
-              return std::partial_ordering::unordered;
-            }
-            if (result == std::partial_ordering::unordered) {
-              result = cmp;
-            }
-            if (result != cmp) {
-              return std::partial_ordering::unordered;
-            }
-          }
-        }
+    CacheLineWaltz(a, b, [&result](const auto &ai, const auto &bi) {
+      const auto cmp = ai <=> bi;
+      if (cmp == std::partial_ordering::unordered) {
+        result = std::partial_ordering::unordered;
+        return false;
       }
-    }
+      if (result == std::partial_ordering::unordered) {
+        result = cmp;
+        return true;
+      }
+      if (result != cmp) {
+        result = std::partial_ordering::unordered;
+        return false;
+      }
+      return true;
+    });
     return result;
   }
 }
@@ -508,28 +531,10 @@ template <ConstMatrixLike View1, ConstMatrixLike View2>
     if (a.GetExtents() != b.GetExtents()) {
       return false;
     }
-    static constexpr size_t kCacheLineSize1 =
-        std::max(2 * std::hardware_destructive_interference_size / sizeof(typename View1::NumericType), 1uz);
-    static constexpr size_t kCacheLineSize2 =
-        std::max(2 * std::hardware_destructive_interference_size / sizeof(typename View2::NumericType), 1uz);
-    static constexpr size_t kCacheLineSize = std::max(kCacheLineSize1, kCacheLineSize2);
-    const auto rows = a.Rows();
-    const auto cols = a.Columns();
-    for (size_t row_maj = 0; row_maj < rows; row_maj += kCacheLineSize) {
-      for (size_t col_maj = 0; col_maj < cols; col_maj += kCacheLineSize) {
-        const auto row_end = std::min(row_maj + kCacheLineSize, static_cast<size_t>(rows));
-        const auto col_end = std::min(col_maj + kCacheLineSize, static_cast<size_t>(cols));
-        for (size_t row = row_maj; row < row_end; row++) {
-          for (size_t col = col_maj; col < col_end; col++) {
-            const auto cmp = a[row, col] <=> b[row, col];
-            if (cmp != ord) {
-              return false;
-            }
-          }
-        }
-      }
-    }
-    return true;
+    return CacheLineWaltz(a, b, [&ord](const auto &ai, const auto &bi) {
+      const auto cmp = ai <=> bi;
+      return cmp == ord;
+    });
   }
 }
 
