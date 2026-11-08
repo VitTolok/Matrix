@@ -51,6 +51,9 @@
 
 // Stack Extents Calculation Tests
 namespace {
+using matrix_implementation_detail::HStackExtents;
+using matrix_implementation_detail::HStackExtentsStackable;
+using matrix_implementation_detail::HStackExtentsType;
 using matrix_implementation_detail::VStackExtents;
 using matrix_implementation_detail::VStackExtentsStackable;
 using matrix_implementation_detail::VStackExtentsType;
@@ -61,7 +64,6 @@ static_assert(
       auto ext2 = std::extents<int32_t, 2, 2>{};
       auto ext3 = std::extents<int32_t, 3, 2>{};
       auto ext4 = std::extents<int32_t, 3, 3>{};
-      auto x = Matrix<int, std::extents<int, 2, 3>>{1, 2, 3, 4, 5, 6};
       STATIC_ASSERT(std::is_same_v<VStackExtentsType<decltype(ext1), decltype(ext4)>, std::extents<int32_t, 5, 3>>)
       STATIC_ASSERT(!VStackExtentsStackable<decltype(ext1), decltype(ext2)>);
       STATIC_ASSERT(!VStackExtentsStackable<decltype(ext1), decltype(ext3)>);
@@ -70,8 +72,11 @@ static_assert(
       STATIC_ASSERT_FAILURE(VStackExtents(ext1, ext2););
       STATIC_ASSERT_FAILURE(VStackExtents(ext1, ext3););
       STATIC_ASSERT(VStackExtents(ext1, ext4) == std::extents<int32_t, 5, 3>{});
-      //   STATIC_ASSERT(MatrixVStack(Matrix{{1, 2, 3, 4, 5, 6}, ext1}, Matrix({1, 2, 3, 4, 5, 6, 7, 8, 9}, ext3)) ==
-      //                 Matrix{{1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9}, std::extents<int32_t, 5, 3>{}})
+      auto x = Matrix<int, std::extents<int, 2, 3>>{1, 2, 3, 4, 5, 6};
+      auto y = Matrix<int, std::extents<int, 3, 3>>{1, 2, 3, 4, 5, 6, 7, 8, 9};
+      auto xy = Matrix<int, std::extents<int, 5, 3>>{1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+      STATIC_ASSERT(MatrixCompare(MatrixVStack(x, y), xy) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixVStack(x, y), xy, std::partial_ordering::equivalent))
       return true;
     }(),
     "VStackExtents full static extents test");
@@ -194,6 +199,149 @@ static_assert(
       return true;
     }(),
     "VStackExtents mixed extents test");
+
+static_assert(
+    []() constexpr -> bool {
+      auto ext1 = std::extents<int32_t, 2, 3>{};
+      auto ext2 = std::extents<int32_t, 2, 2>{};
+      auto ext3 = std::extents<int32_t, 3, 2>{};
+      auto ext4 = std::extents<int32_t, 3, 3>{};
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<decltype(ext1), decltype(ext2)>, std::extents<int32_t, 2, 5>>)
+      STATIC_ASSERT(!HStackExtentsStackable<decltype(ext1), decltype(ext4)>);
+      STATIC_ASSERT(!HStackExtentsStackable<decltype(ext1), decltype(ext3)>);
+      STATIC_ASSERT_FAILURE(HStackExtentsType<decltype(ext1), decltype(ext4)>{};);
+      STATIC_ASSERT_FAILURE(HStackExtentsType<decltype(ext1), decltype(ext3)>{};);
+      STATIC_ASSERT_FAILURE(HStackExtents(ext1, ext4););
+      STATIC_ASSERT_FAILURE(HStackExtents(ext1, ext3););
+      STATIC_ASSERT(HStackExtents(ext1, ext2) == std::extents<int32_t, 2, 5>{});
+      auto x = Matrix<int, std::extents<int, 2, 3>>{1, 2, 3, 4, 5, 6};
+      auto y = Matrix<int, std::extents<int, 2, 2>>{1, 2, 3, 4};
+      auto xy = Matrix<int, std::extents<int, 2, 5>>{1, 2, 3, 1, 2, 4, 5, 6, 3, 4};
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(x, y), xy) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(x, y), xy, std::partial_ordering::equivalent))
+      return true;
+    }(),
+    "HStackExtents full static extents test");
+static_assert(
+    []() constexpr -> bool {
+      using Ext = std::extents<int16_t, std::dynamic_extent, std::dynamic_extent>;
+      auto ext1 = Ext{2, 3};
+      auto ext2 = Ext{2, 2};
+      auto ext3 = Ext{3, 2};
+      auto ext4 = Ext{3, 3};
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<decltype(ext1), decltype(ext4)>, Ext>)
+      STATIC_ASSERT_THROW(HStackExtents(ext1, ext4);)
+      STATIC_ASSERT_THROW(HStackExtents(ext1, ext3);)
+      using Mat = Matrix<int, Ext>;
+      auto m1 = Mat(std::from_range, {1, 2, 3, 4, 5, 6}, Ext{2, 3});
+      auto m2 = Mat(std::from_range, {7, 8, 9, 10}, Ext{2, 2});
+      auto expected = Mat(std::from_range, {1, 2, 3, 7, 8, 4, 5, 6, 9, 10}, Ext{2, 5});
+      auto result = MatrixHStack(m1, m2);
+      STATIC_ASSERT(std::is_same_v<decltype(result), Mat>)
+      STATIC_ASSERT(result.Rows() == expected.Rows())
+      STATIC_ASSERT(result.Columns() == expected.Columns())
+      STATIC_ASSERT(MatrixCompare(result, expected) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(result, expected, std::partial_ordering::equivalent))
+      STATIC_ASSERT(!MatrixCompare(result, expected, std::partial_ordering::greater))
+      STATIC_ASSERT(!MatrixCompare(result, expected, std::partial_ordering::less))
+      STATIC_ASSERT(!MatrixCompare(result, expected, std::partial_ordering::unordered))
+
+      return true;
+    }(),
+    "HStackExtents full dynamic extents test");
+
+static_assert(
+    []() constexpr -> bool {
+      using Ext1 = std::extents<uint16_t, 2, std::dynamic_extent>;
+      using Ext2 = std::extents<uint16_t, std::dynamic_extent, 2>;
+      using Ext3 = std::extents<uint16_t, 3, std::dynamic_extent>;
+      using Ext4 = std::extents<uint16_t, std::dynamic_extent, 3>;
+
+      using Ext11 = std::extents<uint16_t, 2, std::dynamic_extent>;
+      using Ext12 = std::extents<uint16_t, 2, std::dynamic_extent>;
+      using Ext14 = std::extents<uint16_t, 2, std::dynamic_extent>;
+      using Ext22 = std::extents<uint16_t, std::dynamic_extent, 4>;
+      using Ext23 = std::extents<uint16_t, 3, std::dynamic_extent>;
+      using Ext24 = std::extents<uint16_t, std::dynamic_extent, 5>;
+      using Ext33 = std::extents<uint16_t, 3, std::dynamic_extent>;
+      using Ext34 = std::extents<uint16_t, 3, std::dynamic_extent>;
+      using Ext44 = std::extents<uint16_t, std::dynamic_extent, 6>;
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext1, Ext1>, Ext11>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext1, Ext2>, Ext12>)
+      STATIC_ASSERT_FAILURE(HStackExtentsType<Ext1, Ext3>{};)
+      STATIC_ASSERT(!HStackExtentsStackable<Ext1, Ext3>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext1, Ext4>, Ext14>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext2, Ext2>, Ext22>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext2, Ext3>, Ext23>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext2, Ext4>, Ext24>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext3, Ext3>, Ext33>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext3, Ext4>, Ext34>)
+      STATIC_ASSERT(std::is_same_v<HStackExtentsType<Ext4, Ext4>, Ext44>)
+
+      auto ext1 = Ext1{3};
+      auto ext2 = Ext2{2};
+      auto ext3 = Ext3{2};
+      auto ext4 = Ext4{3};
+
+      auto ext11 = Ext11{6};
+      auto ext12 = Ext12{5};
+      auto ext22 = Ext22{2};
+      auto ext33 = Ext33{4};
+      auto ext34 = Ext34{5};
+      auto ext44 = Ext44{3};
+
+      STATIC_ASSERT(HStackExtents(ext1, ext1) == ext11)
+      STATIC_ASSERT(HStackExtents(ext1, ext2) == ext12)
+      STATIC_ASSERT_FAILURE(HStackExtents(ext1, ext3))
+      STATIC_ASSERT_THROW(HStackExtents(ext1, ext4))
+      STATIC_ASSERT(HStackExtents(ext2, ext2) == ext22)
+      STATIC_ASSERT_THROW(HStackExtents(ext2, ext3))
+      STATIC_ASSERT_THROW(HStackExtents(ext2, ext4))
+      STATIC_ASSERT(HStackExtents(ext3, ext3) == ext33)
+      STATIC_ASSERT(HStackExtents(ext3, ext4) == ext34)
+      STATIC_ASSERT(HStackExtents(ext4, ext4) == ext44)
+
+      using Mat1 = Matrix<int64_t, Ext1>;
+      using Mat2 = Matrix<int64_t, Ext2>;
+      using Mat3 = Matrix<int64_t, Ext3>;
+      using Mat4 = Matrix<int64_t, Ext4>;
+
+      auto m1 = Mat1(std::from_range, {1, 2, 3, 4, 5, 6}, ext1);
+      auto m2 = Mat2(std::from_range, {1, 2, 3, 4}, ext2);
+      auto m3 = Mat3(std::from_range, {1, 2, 3, 4, 5, 6}, ext3);
+      auto m4 = Mat4(std::from_range, {1, 2, 3, 4, 5, 6, 7, 8, 9}, ext4);
+
+      using Mat11 = Matrix<int64_t, Ext11>;
+      using Mat12 = Matrix<int64_t, Ext12>;
+      using Mat22 = Matrix<int64_t, Ext22>;
+      using Mat33 = Matrix<int64_t, Ext33>;
+      using Mat34 = Matrix<int64_t, Ext34>;
+      using Mat44 = Matrix<int64_t, Ext44>;
+
+      auto m11 = Mat11(std::from_range, {1, 2, 3, 1, 2, 3, 4, 5, 6, 4, 5, 6}, ext11);
+      auto m12 = Mat12(std::from_range, {1, 2, 3, 1, 2, 4, 5, 6, 3, 4}, ext12);
+      auto m22 = Mat22(std::from_range, {1, 2, 1, 2, 3, 4, 3, 4}, ext22);
+      auto m33 = Mat33(std::from_range, {1, 2, 1, 2, 3, 4, 3, 4, 5, 6, 5, 6}, ext33);
+      auto m34 = Mat34(std::from_range, {1, 2, 1, 2, 3, 3, 4, 4, 5, 6, 5, 6, 7, 8, 9}, ext34);
+      auto m44 = Mat44(std::from_range, {1, 2, 3, 1, 2, 3, 4, 5, 6, 4, 5, 6, 7, 8, 9, 7, 8, 9}, ext44);
+
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m1, m1), m11, std::partial_ordering::equivalent))
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m1, m2), m12, std::partial_ordering::equivalent))
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m2, m2), m22, std::partial_ordering::equivalent))
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m3, m3), m33, std::partial_ordering::equivalent))
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m3, m4), m34, std::partial_ordering::equivalent))
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m4, m4), m44, std::partial_ordering::equivalent))
+
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m1, m1), m11) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m1, m2), m12) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m2, m2), m22) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m3, m3), m33) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m3, m4), m34) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(MatrixHStack(m4, m4), m44) == std::partial_ordering::equivalent)
+
+      return true;
+    }(),
+    "HStackExtents mixed extents test");
 }  // namespace
 
 int main() {};

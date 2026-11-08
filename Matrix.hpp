@@ -80,7 +80,7 @@ using MatrixCommonExtents =
 
 template <typename Extents1, typename Extents2>
   requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
-inline constexpr void EnforceExtents(Extents1 ext1, Extents2 ext2) {
+inline constexpr void EnforceSameExtents(Extents1 ext1, Extents2 ext2) {
   if (ext1 != ext2) {
     throw std::invalid_argument("the extents of the provided matrices are incompatible");
   }
@@ -139,19 +139,13 @@ static inline constexpr VStackExtentsReturnType<Extents1, Extents2> VStackExtent
   requires(!(Extents1::static_extent(1) != std::dynamic_extent && Extents2::static_extent(1) != std::dynamic_extent &&
              Extents1::static_extent(1) != Extents2::static_extent(1)))
 {
-  using IndexType = std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>;
-  static constexpr size_t kRowExtent =
-      (Extents1::static_extent(0) == std::dynamic_extent || Extents2::static_extent(0) == std::dynamic_extent)
-          ? std::dynamic_extent
-          : Extents1::static_extent(0) + Extents2::static_extent(0);
   if constexpr (Extents1::static_extent(1) == std::dynamic_extent ||
                 Extents2::static_extent(1) == std::dynamic_extent) {
     if (ext1.extent(1) != ext2.extent(1)) {
       throw std::invalid_argument("the matrices have a different number of columns and cannot be stacked");
     }
   }
-  static constexpr size_t kColumnExtent = std::min(Extents1::static_extent(1), Extents2::static_extent(1));
-  using ResultType = std::extents<IndexType, kRowExtent, kColumnExtent>;
+  using ResultType = VStackExtentsReturnType<Extents1, Extents2>;
   static constexpr bool kIsResultStaticRows = (ResultType::static_extent(0) != std::dynamic_extent);
   static constexpr bool kIsResultStaticColumns = (ResultType::static_extent(1) != std::dynamic_extent);
   if constexpr (kIsResultStaticRows && kIsResultStaticColumns) {
@@ -166,23 +160,26 @@ static inline constexpr VStackExtentsReturnType<Extents1, Extents2> VStackExtent
 }
 
 template <Extents Extents1, Extents Extents2>
-static inline constexpr auto HStackExtents(Extents1 ext1, Extents2 ext2)
+using HStackExtentsReturnType =
+    std::extents<std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>,
+                 std::min(Extents1::static_extent(0), Extents2::static_extent(0)),
+                 ((Extents1::static_extent(1) == std::dynamic_extent ||
+                   Extents2::static_extent(1) == std::dynamic_extent)
+                      ? std::dynamic_extent
+                      : Extents1::static_extent(1) + Extents2::static_extent(1))>;
+
+template <Extents Extents1, Extents Extents2>
+static inline constexpr HStackExtentsReturnType<Extents1, Extents2> HStackExtents(Extents1 ext1, Extents2 ext2)
   requires(!(Extents1::static_extent(0) != std::dynamic_extent && Extents2::static_extent(0) != std::dynamic_extent &&
-             Extents1::static_extent(0) != Extents2::static_extent(1)))
+             Extents1::static_extent(0) != Extents2::static_extent(0)))
 {
-  using IndexType = std::common_type_t<typename Extents1::index_type, typename Extents2::index_type>;
-  static constexpr size_t kColumnExtent =
-      (Extents1::static_extent(1) == std::dynamic_extent || Extents2::static_extent(1) == std::dynamic_extent)
-          ? std::dynamic_extent
-          : Extents1::static_extent(1) + Extents2::static_extent(1);
   if constexpr (Extents1::static_extent(0) == std::dynamic_extent ||
                 Extents2::static_extent(0) == std::dynamic_extent) {
     if (ext1.extent(0) != ext2.extent(0)) {
       throw std::invalid_argument("the matrices have a different number of rows and cannot be stacked");
     }
   }
-  static constexpr size_t kRowExtent = std::min(Extents1::static_extent(0), Extents2::static_extent(0));
-  using ResultType = std::extents<IndexType, kRowExtent, kColumnExtent>;
+  using ResultType = HStackExtentsReturnType<Extents1, Extents2>;
   static constexpr bool kIsResultStaticRows = (ResultType::static_extent(0) != std::dynamic_extent);
   static constexpr bool kIsResultStaticColumns = (ResultType::static_extent(1) != std::dynamic_extent);
   if constexpr (kIsResultStaticRows && kIsResultStaticColumns) {
@@ -201,6 +198,13 @@ concept VStackExtentsStackable =
 template <Extents Extents1, Extents Extents2>
   requires VStackExtentsStackable<Extents1, Extents2>
 using VStackExtentsType = VStackExtentsReturnType<Extents1, Extents2>;
+
+template <typename Extents1, typename Extents2>
+concept HStackExtentsStackable =
+    Extents<Extents1> && Extents<Extents2> && requires() { HStackExtents(Extents1{}, Extents2{}); };
+template <Extents Extents1, Extents Extents2>
+  requires HStackExtentsStackable<Extents1, Extents2>
+using HStackExtentsType = HStackExtentsReturnType<Extents1, Extents2>;
 
 template <typename Numeric, Extents Extents>
   requires(std::is_same_v<Numeric, std::remove_cvref_t<Numeric>>)
@@ -361,6 +365,33 @@ class Matrix {
     }
   }
 
+  template <BaseMatrixLike Mat1, BaseMatrixLike Mat2>
+    requires(HStackExtentsStackable<MatExtentsType<Mat2>, MatExtentsType<Mat2>> &&
+             std::is_same_v<Extents, HStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>> &&
+             std::is_convertible_v<MatNumericType<Mat1>, NumericType> &&
+             std::is_convertible_v<MatNumericType<Mat2>, NumericType>)
+  inline constexpr Matrix(HorizontalStackTagType, Mat1 &&a, Mat2 &&b)
+      : storage_{}, extents_(HStackExtents(a.GetExtents(), b.GetExtents())) {
+    const auto total = TotalSize(extents_);
+    if (total == 0) {
+      return;
+    }
+    if constexpr (!kIsStatic) {
+      storage_.resize(total, Numeric{});
+    }
+    const auto rows = a.Rows();
+    const auto cols1 = a.Columns();
+    const auto cols2 = b.Columns();
+    for (size_t row = 0; row < rows; row++) {
+      for (size_t col = 0; col < cols1; col++) {
+        (*this)[row, col] = std::forward<Mat1>(a)[row, col];
+      }
+      for (size_t col = 0; col < cols2; col++) {
+        (*this)[row, cols1 + col] = std::forward<Mat2>(b)[row, col];
+      }
+    }
+  }
+
  private:
   using Storage = std::conditional_t<kIsStatic, std::array<Numeric, kTotalSize>, std::vector<Numeric>>;
   Storage storage_;
@@ -475,6 +506,14 @@ template <BaseMatrixLike Mat1, BaseMatrixLike Mat2,
       VerticalStackTagType{}, std::forward<Mat1>(a), std::forward<Mat2>(b));
 }
 
+template <BaseMatrixLike Mat1, BaseMatrixLike Mat2,
+          typename Numeric = std::common_type_t<MatNumericType<Mat1>, MatNumericType<Mat2>>>
+[[nodiscard]] inline constexpr auto MatrixHStack(Mat1 &&a, Mat2 &&b)
+    -> Matrix<Numeric, HStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>> {
+  return Matrix<Numeric, HStackExtentsType<MatExtentsType<Mat1>, MatExtentsType<Mat2>>>(
+      HorizontalStackTagType{}, std::forward<Mat1>(a), std::forward<Mat2>(b));
+}
+
 /* for matrices of the same extents (the ones that have the same effective extents when this function is invoked):
 
 returns less, if all elements of a are less than their counterparts in b
@@ -523,9 +562,11 @@ through negation can be used to check unstrict relationships like <= and >= for 
 */
 template <ConstMatrixLike View1, ConstMatrixLike View2>
   requires std::three_way_comparable_with<typename View1::NumericType, typename View2::NumericType>
-[[nodiscard]] inline constexpr bool MatrixCompare(const View1 &a, const View2 &b,
-                                                  const std::partial_ordering ord) noexcept {
-  if constexpr (!MatrixExtentsStaticCompatible<typename View1::ExtentsType, typename View2::ExtentsType>) {
+[[nodiscard]] inline constexpr bool MatrixCompare(
+    const View1 &a, const View2 &b,
+    const std::partial_ordering ord) noexcept(noexcept(std::declval<const MatNumericType<View1> &>() <=>
+                                                       std::declval<const MatNumericType<View2> &>())) {
+  if constexpr (!MatrixExtentsStaticCompatible<MatExtentsType<View1>, MatExtentsType<View2>>) {
     return false;
   } else {
     if (a.GetExtents() != b.GetExtents()) {
