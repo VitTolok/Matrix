@@ -62,6 +62,9 @@ template <BaseMatrixLike M>
 using MatExtentsType = typename std::remove_cvref_t<M>::ExtentsType;
 template <BaseMatrixLike M>
 using MatIndexType = typename std::remove_cvref_t<M>::IndexType;
+template <typename E>
+concept ExtentsIsFullStatic =
+    Extents<E> && E::static_extent(0) != std::dynamic_extent && E::static_extent(1) != std::dynamic_extent;
 
 template <typename Extents1, typename Extents2>
 concept MatrixExtentsStaticCompatible =
@@ -80,9 +83,12 @@ using MatrixCommonExtents =
 
 template <typename Extents1, typename Extents2>
   requires(MatrixExtentsStaticCompatible<Extents1, Extents2>)
-inline constexpr void EnforceSameExtents(Extents1 ext1, Extents2 ext2) {
-  if (ext1 != ext2) {
-    throw std::invalid_argument("the extents of the provided matrices are incompatible");
+inline constexpr void EnforceSameExtents(Extents1 ext1, Extents2 ext2) noexcept(ExtentsIsFullStatic<Extents1> &&
+                                                                                ExtentsIsFullStatic<Extents2>) {
+  if constexpr (!ExtentsIsFullStatic<Extents1> || !ExtentsIsFullStatic<Extents2>) {
+    if (ext1 != ext2) {
+      throw std::invalid_argument("the extents of the provided matrices are incompatible");
+    }
   }
 }
 
@@ -324,16 +330,24 @@ class Matrix {
     return extents_;
   }
 
-  template <ConstMatrixLike View>
-  inline constexpr explicit Matrix(const View &view) : storage_{}, extents_{view.GetExtents()} {
+  template <BaseMatrixLike M>
+    requires MatrixExtentsStaticCompatible<Extents, MatExtentsType<M>> && (ConstMatrixLike<M> || MovableMatrixLike<M>)
+  inline constexpr explicit Matrix(M &&m) : storage_{}, extents_{} {
+    (*this) = std::forward<M>(m);
+  }
+  template <BaseMatrixLike M>
+    requires MatrixExtentsStaticCompatible<Extents, MatExtentsType<M>> && (ConstMatrixLike<M> || MovableMatrixLike<M>)
+  inline constexpr Matrix &operator=(M &&m) {
+    extents_ = m.GetExtents();
     const auto total = TotalSize(extents_);
     if (TotalSize(extents_) == 0) {
-      return;
+      return *this;
     }
     if constexpr (!kIsStatic) {
-      storage_.resize(total, view[0, 0]);
+      storage_.resize(total, m[0, 0]);
     }
-    CacheLineWaltz(*this, view, [](auto &a, const auto &b) { a = b; });
+    CacheLineWaltz(*this, std::forward<M>(m), []<typename B>(auto &a, B &&b) { a = std::forward<B>(b); });
+    return *this;
   }
 
   template <BaseMatrixLike Mat1, BaseMatrixLike Mat2>
@@ -559,6 +573,7 @@ template <ConstMatrixLike View1, ConstMatrixLike View2>
 returns false if extents don't match
 
 through negation can be used to check unstrict relationships like <= and >= for all elements
+provided you guarantee matching extents
 */
 template <ConstMatrixLike View1, ConstMatrixLike View2>
   requires std::three_way_comparable_with<typename View1::NumericType, typename View2::NumericType>
@@ -579,63 +594,25 @@ template <ConstMatrixLike View1, ConstMatrixLike View2>
   }
 }
 
-// template <ConstMatrixLike T, typename Callable>
-//   requires requires(std::remove_cvref_t<Callable> &c, const typename T::NumericType &n) { c(n); }
-// struct TransformMatrixView {
-//   using IndexType = typename T::IndexType;
-//   using NumericType = decltype((std::declval<Callable &>())(std::declval<const typename T::NumericType &>()));
-//   using ExtentsType = TransposedExtentsType<T>;
+template <MutableMatrixLike Mat1, BaseMatrixLike Mat2>
+  requires ConstMatrixLike<Mat2> || MovableMatrixLike<Mat2>
+inline constexpr Mat1 &operator+=(Mat1 &a,
+                                  Mat2 &&b) noexcept(noexcept(EnforceSameExtents(a.GetExtents(), b.GetExtents())) &&
+                                                     noexcept(a[0, 0] += std::forward<Mat2>(b)[0, 0])) {
+  EnforceSameExtents(a.GetExtents(), b.GetExtents());
+  CacheLineWaltz(a, std::forward<Mat2>(b), []<typename Bi>(auto &ai, Bi &&bi) { ai += std::forward<Bi>(bi); });
+  return a;
+}
+template <MutableMatrixLike Mat1, BaseMatrixLike Mat2>
+  requires ConstMatrixLike<Mat2> || MovableMatrixLike<Mat2>
+inline constexpr Mat1 &operator-=(Mat1 &a,
+                                  Mat2 &&b) noexcept(noexcept(EnforceSameExtents(a.GetExtents(), b.GetExtents())) &&
+                                                     noexcept(a[0, 0] -= std::forward<Mat2>(b)[0, 0])) {
+  EnforceSameExtents(a.GetExtents(), b.GetExtents());
+  CacheLineWaltz(a, std::forward<Mat2>(b), []<typename Bi>(auto &ai, Bi &&bi) { ai -= std::forward<Bi>(bi); });
+  return a;
+}
 
-//   static inline constexpr bool kIsStatic = (ExtentsType::rank_dynamic() == 0);
-//   inline static constexpr bool kIsStaticRows = (ExtentsType::static_extent(0) != std::dynamic_extent);
-//   inline static constexpr bool kIsStaticColumns = (ExtentsType::static_extent(1) != std::dynamic_extent);
-
-//   inline constexpr explicit TransformMatrixView(const T &matrix, Callable &&callable)
-//       : ref_(matrix), callable_(callable) {
-//   }
-//   inline constexpr TransformMatrixView(const TransformMatrixView &) noexcept = default;
-//   inline constexpr TransformMatrixView(TransformMatrixView &&) noexcept = default;
-//   inline constexpr void operator=(const TransformMatrixView &) noexcept = delete;
-//   inline constexpr void operator=(TransformMatrixView &&) noexcept = delete;
-//   inline constexpr void operator=(const TransformMatrixView &) const noexcept = delete;
-//   inline constexpr void operator=(TransformMatrixView &&) const noexcept = delete;
-//   inline constexpr ~TransformMatrixView() noexcept = default;
-
-//   inline constexpr const T &Original() const noexcept {
-//     return ref_;
-//   }
-//   inline constexpr const NumericType &operator[](IndexType row, IndexType column) const noexcept {
-//     return ref_[column, row];
-//   }
-//   inline constexpr const NumericType &At(IndexType row, IndexType column) const {
-//     return ref_.At(column, row);
-//   }
-//   inline constexpr IndexType Rows() const noexcept {
-//     return ref_.Columns();
-//   }
-//   inline constexpr IndexType Columns() const noexcept {
-//     return ref_.Rows();
-//   }
-//   inline constexpr ExtentsType GetExtents() const noexcept {
-//     if constexpr (kIsStatic) {
-//       return ExtentsType{};
-//     } else if constexpr (kIsStaticRows) {
-//       return ExtentsType{ref_.Rows()};
-//     } else if constexpr (kIsStaticColumns) {
-//       return ExtentsType{ref_.Columns()};
-//     } else {
-//       return ExtentsType{ref_.Columns(), ref_.Rows()};
-//     }
-//     static_assert(ConstMatrixLike<TransposedMatrixView<T>>, "transposed view is missing something important");
-//   }
-
-//  private:
-//   const T &ref_;
-//   Callable &&callable_;
-// };
-
-// template <ConstMatrixLike Matrix1, ConstMatrixLike Matrix2>
-// Matrix
 }  // namespace matrix_implementation_detail
 using matrix_implementation_detail::Matrix;
 using matrix_implementation_detail::MatrixCompare;

@@ -2,14 +2,15 @@
 #include <cstdint>
 #include <print>
 #include <span>
+#include <ranges>
 #include "Matrix.hpp"
 
 int main() {
   Matrix<int64_t, std::extents<size_t, 2, 3>> m{1};
 
   std::vector<int64_t> v{1, 2, 3, 4, 5, 6};
-  std::extents<size_t, 2, std::dynamic_extent> ext{3};
-  Matrix<int64_t, std::extents<size_t, 2, std::dynamic_extent>> m2{std::move(v), ext};
+  std::extents<size_t, 2, std::dynamic_extent> ext{2, 3};
+  Matrix<int64_t, std::extents<size_t, 2, std::dynamic_extent>> m2{std::from_range, std::move(v), ext};
 
   m[0, 1] = 0;
   auto m3 = MatrixTCopy(m);

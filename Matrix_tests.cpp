@@ -50,7 +50,7 @@
 #define STATIC_ASSERT_FAILURE(...)
 
 // Stack Extents Calculation Tests
-namespace {
+namespace matrix_stack_tests {
 using matrix_implementation_detail::HStackExtents;
 using matrix_implementation_detail::HStackExtentsStackable;
 using matrix_implementation_detail::HStackExtentsType;
@@ -342,6 +342,139 @@ static_assert(
       return true;
     }(),
     "HStackExtents mixed extents test");
-}  // namespace
+}  // namespace matrix_stack_tests
+
+namespace matrix_arithmetic_tests {
+
+using matrix_implementation_detail::MatrixExtentsStaticCompatible;
+static_assert(
+    []() -> bool {
+      using Ext1 = std::extents<size_t, 2, 3>;
+      using Ext2 = std::extents<size_t, 2, 2>;
+      using Ext3 = std::extents<size_t, 3, 2>;
+      using Ext4 = std::extents<size_t, 3, 3>;
+
+      using Mat1 = Matrix<int32_t, Ext1>;
+      using Mat2 = Matrix<int32_t, Ext2>;
+      using Mat3 = Matrix<int32_t, Ext3>;
+      using Mat4 = Matrix<int32_t, Ext4>;
+
+      auto a1 = Mat1{1, 2, 3, 4, 5, 6};
+      auto a2 = Mat2{1, 2, 3, 4};
+      auto a3 = Mat3{1, 2, 3, 4, 5, 6};
+      auto a4 = Mat4{1, 2, 3, 4, 5, 6, 7, 8, 9};
+
+      const auto b1 = Mat1{3, 2, 1, 3, 2, 1};
+      const auto b2 = Mat2{2, 1, 2, 1};
+      const auto b3 = Mat3{2, 1, 2, 1, 2, 1};
+      const auto b4 = Mat4{3, 2, 1, 3, 2, 1, 3, 2, 1};
+
+      const auto c1 = Mat1{4, 4, 4, 7, 7, 7};
+      const auto c2 = Mat2{3, 3, 5, 5};
+      const auto c3 = Mat3{3, 3, 5, 5, 7, 7};
+      const auto c4 = Mat4{4, 4, 4, 7, 7, 7, 10, 10, 10};
+
+      STATIC_ASSERT_FAILURE(a1 += b2)
+      STATIC_ASSERT_FAILURE(a1 += b3)
+      STATIC_ASSERT_FAILURE(a1 += b2)
+      STATIC_ASSERT_FAILURE(a2 += b1)
+      STATIC_ASSERT_FAILURE(a2 += b3)
+      STATIC_ASSERT_FAILURE(a2 += b4)
+      STATIC_ASSERT_FAILURE(a3 += b1)
+      STATIC_ASSERT_FAILURE(a3 += b2)
+      STATIC_ASSERT_FAILURE(a3 += b4)
+      STATIC_ASSERT_FAILURE(a4 += b1)
+      STATIC_ASSERT_FAILURE(a4 += b2)
+      STATIC_ASSERT_FAILURE(a4 += b3)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext3>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext3>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext3>)
+
+      STATIC_ASSERT(MatrixCompare(a1 += b1, c1) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a2 += b2, c2) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a3 += b3, c3) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a4 += b4, c4) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a1 += b1, c1) == std::partial_ordering::greater)
+      STATIC_ASSERT(MatrixCompare(a2 += b2, c2) == std::partial_ordering::greater)
+      STATIC_ASSERT(MatrixCompare(a3 += b3, c3) == std::partial_ordering::greater)
+      STATIC_ASSERT(MatrixCompare(a4 += b4, c4) == std::partial_ordering::greater)
+
+      return true;
+    }(),
+    "matrix static compound add test");
+static_assert(
+    []() -> bool {
+      using Ext1 = std::extents<size_t, 2, 3>;
+      using Ext2 = std::extents<size_t, 2, 2>;
+      using Ext3 = std::extents<size_t, 3, 2>;
+      using Ext4 = std::extents<size_t, 3, 3>;
+
+      using Mat1 = Matrix<int32_t, Ext1>;
+      using Mat2 = Matrix<int32_t, Ext2>;
+      using Mat3 = Matrix<int32_t, Ext3>;
+      using Mat4 = Matrix<int32_t, Ext4>;
+
+      auto a1 = Mat1{1, 2, 3, 4, 5, 6};
+      auto a2 = Mat2{1, 2, 3, 4};
+      auto a3 = Mat3{1, 2, 3, 4, 5, 6};
+      auto a4 = Mat4{1, 2, 3, 4, 5, 6, 7, 8, 9};
+
+      const auto b1 = Mat1{3, 2, 1, 3, 2, 1};
+      const auto b2 = Mat2{2, 1, 2, 1};
+      const auto b3 = Mat3{2, 1, 2, 1, 2, 1};
+      const auto b4 = Mat4{3, 2, 1, 3, 2, 1, 3, 2, 1};
+
+      const auto c1 = Mat1{-2, 0, 2, 1, 3, 5};
+      const auto c2 = Mat2{-1, 1, 1, 3};
+      const auto c3 = Mat3{-1, 1, 1, 3, 3, 5};
+      const auto c4 = Mat4{-2, 0, 2, 1, 3, 5, 4, 6, 8};
+
+      STATIC_ASSERT_FAILURE(a1 -= b2)
+      STATIC_ASSERT_FAILURE(a1 -= b3)
+      STATIC_ASSERT_FAILURE(a1 -= b2)
+      STATIC_ASSERT_FAILURE(a2 -= b1)
+      STATIC_ASSERT_FAILURE(a2 -= b3)
+      STATIC_ASSERT_FAILURE(a2 -= b4)
+      STATIC_ASSERT_FAILURE(a3 -= b1)
+      STATIC_ASSERT_FAILURE(a3 -= b2)
+      STATIC_ASSERT_FAILURE(a3 -= b4)
+      STATIC_ASSERT_FAILURE(a4 -= b1)
+      STATIC_ASSERT_FAILURE(a4 -= b2)
+      STATIC_ASSERT_FAILURE(a4 -= b3)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext3>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext1, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext3>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext2, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext3, Ext4>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext1>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext2>)
+      STATIC_ASSERT(!MatrixExtentsStaticCompatible<Ext4, Ext3>)
+
+      STATIC_ASSERT(MatrixCompare(a1 -= b1, c1) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a2 -= b2, c2) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a3 -= b3, c3) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a4 -= b4, c4) == std::partial_ordering::equivalent)
+      STATIC_ASSERT(MatrixCompare(a1 -= b1, c1) == std::partial_ordering::less)
+      STATIC_ASSERT(MatrixCompare(a2 -= b2, c2) == std::partial_ordering::less)
+      STATIC_ASSERT(MatrixCompare(a3 -= b3, c3) == std::partial_ordering::less)
+      STATIC_ASSERT(MatrixCompare(a4 -= b4, c4) == std::partial_ordering::less)
+
+      return true;
+    }(),
+    "matrix static compound sub test");
+}  // namespace matrix_arithmetic_tests
 
 int main() {};
